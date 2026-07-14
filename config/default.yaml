@@ -21,6 +21,9 @@ clustering:
   min_samples: 50                           # HDBSCAN parameter
   l2_normalize: true                        # normalize embeddings before clustering
   random_state: 42
+  umap_components: null                     # UMAP dimension reduction (optional, e.g. 10)
+  umap_neighbors: 15                        # UMAP parameter
+  noise_threshold: 0.35                     # HDBSCAN maximum allowed noise ratio
 
 soft_labels:
   type:        "softmax_neg_distance"       # CEVD's formulation
@@ -40,6 +43,7 @@ fusion:
   type:        "multihead_attention"        # ["linear_softmax", "multihead_attention"]
   num_heads:   4                            # only used for multihead_attention
   attention_dim: 128
+  attention_supervision: "none"             # ["none", "gate", "residual", "cross_entropy"]
 
 loss:
   vuln_weight:         1.0                  # weight on cross-entropy for vulnerability

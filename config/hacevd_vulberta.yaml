@@ -19,6 +19,9 @@ clustering:
   min_samples: 50
   l2_normalize: true
   random_state: 42
+  umap_components: 10
+  umap_neighbors: 15
+  noise_threshold: 0.35
 
 soft_labels:
   type:        "softmax_neg_distance"
@@ -38,6 +41,7 @@ fusion:
   type:        "multihead_attention"
   num_heads:   4
   attention_dim: 128
+  attention_supervision: "gate"
 
 loss:
   vuln_weight:         1.0

@@ -3,7 +3,7 @@
 from .data_loader import (
     EmbeddingDataset,
     build_dataloader,
-    build_oversampler,
+    oversample_dataset,
     collate,
     synthetic_dataset,
 )
@@ -11,7 +11,7 @@ from .data_loader import (
 __all__ = [
     "EmbeddingDataset",
     "build_dataloader",
-    "build_oversampler",
+    "oversample_dataset",
     "collate",
     "synthetic_dataset",
 ]

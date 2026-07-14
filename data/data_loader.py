@@ -46,22 +46,49 @@ class EmbeddingDataset(Dataset):
         return item
 
 
-def build_oversampler(labels: np.ndarray) -> WeightedRandomSampler:
-    """Random oversampling sampler to balance vulnerable / non-vulnerable.
+def oversample_dataset(dataset: EmbeddingDataset) -> EmbeddingDataset:
+    """Replicates minority class samples to exactly match the majority class size.
 
-    The CEVD paper uses random oversampling of the minority class.
+    This ensures balanced training batches without the high variance of
+    WeightedRandomSampler bootstrap sampling.
     """
+    labels = dataset.labels
     counts = np.bincount(labels)
     if len(counts) < 2 or 0 in counts:
-        # Degenerate case (e.g. only one class present); fall back to uniform.
-        weights = np.ones_like(labels, dtype=np.float32)
-    else:
-        class_weights = 1.0 / counts.astype(np.float32)
-        weights = class_weights[labels]
-    return WeightedRandomSampler(
-        weights=torch.from_numpy(weights).double(),
-        num_samples=int(len(labels)),
-        replacement=True,
+        return dataset
+
+    majority_class = np.argmax(counts)
+    minority_class = 1 - majority_class
+
+    majority_idx = np.where(labels == majority_class)[0]
+    minority_idx = np.where(labels == minority_class)[0]
+
+    n_majority = len(majority_idx)
+    n_minority = len(minority_idx)
+
+    if n_majority == 0 or n_minority == 0:
+        return dataset
+
+    # Replicate minority class indices to match majority size
+    rng = np.random.default_rng(42)
+    extra_minority_idx = rng.choice(minority_idx, size=n_majority - n_minority, replace=True)
+    new_minority_idx = np.concatenate([minority_idx, extra_minority_idx])
+
+    all_idx = np.concatenate([majority_idx, new_minority_idx])
+    rng.shuffle(all_idx)
+
+    new_embeddings = dataset.embeddings[all_idx]
+    new_labels = dataset.labels[all_idx]
+    new_projects = dataset.projects[all_idx]
+    new_hard_domains = dataset.hard_domains[all_idx] if dataset.hard_domains is not None else None
+    new_soft_domains = dataset.soft_domains[all_idx] if dataset.soft_domains is not None else None
+
+    return EmbeddingDataset(
+        embeddings=new_embeddings,
+        labels=new_labels,
+        projects=new_projects,
+        hard_domains=new_hard_domains,
+        soft_domains=new_soft_domains,
     )
 
 
@@ -74,15 +101,15 @@ def build_dataloader(
 ) -> DataLoader:
     """Create a DataLoader.
 
-    If ``oversample`` is true we use a weighted sampler and disable shuffling
-    (the sampler handles the random order itself).
+    If ``oversample`` is true we oversample the dataset to make minority and
+    majority classes equal, and use normal shuffling.
     """
     if oversample:
-        sampler = build_oversampler(dataset.labels)
+        dataset = oversample_dataset(dataset)
         return DataLoader(
             dataset,
             batch_size=batch_size,
-            sampler=sampler,
+            shuffle=True,
             num_workers=num_workers,
             collate_fn=collate,
         )

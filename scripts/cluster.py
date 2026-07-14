@@ -24,6 +24,7 @@ def main() -> None:
     parser.add_argument("--min-cluster-size", type=int, default=200)
     parser.add_argument("--min-samples", type=int, default=50)
     parser.add_argument("--n-jobs", type=int, default=-1, help="Number of parallel jobs for HDBSCAN (-1 to use all cores)")
+    parser.add_argument("--noise-threshold", type=float, default=0.35, help="Maximum allowed noise ratio for HDBSCAN")
     args = parser.parse_args()
 
     import time
@@ -41,6 +42,7 @@ def main() -> None:
         min_cluster_size=args.min_cluster_size,
         min_samples=args.min_samples,
         core_dist_n_jobs=args.n_jobs,
+        noise_threshold=args.noise_threshold,
     )
     elapsed = time.time() - start_time
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Clustering finished in {elapsed:.2f} seconds.")

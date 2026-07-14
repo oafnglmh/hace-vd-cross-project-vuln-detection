@@ -88,6 +88,9 @@ def build_pseudo_domains(cfg: dict, train_emb: np.ndarray) -> tuple[np.ndarray, 
         random_state=cl.get("random_state", 42),
         core_dist_n_jobs=cl.get("n_jobs", -1),
         use_gpu=cl.get("use_gpu", True),
+        umap_components=cl.get("umap_components"),
+        umap_neighbors=cl.get("umap_neighbors", 15),
+        noise_threshold=cl.get("noise_threshold", 0.35),
     )
 
     if cache_path is not None:
@@ -188,6 +191,7 @@ def main() -> None:
         attention_heads=cfg["fusion"].get("num_heads") or 4,
         attention_dim=cfg["fusion"].get("attention_dim") or 128,
         use_projection=cfg["loss"]["contrastive_weight"] > 0,
+        attention_supervision=cfg["fusion"].get("attention_supervision", "none"),
     )
 
     loss_cfg = LossConfig(

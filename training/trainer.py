@@ -97,6 +97,14 @@ class Trainer:
         # Domain classification (Equation (9)).
         loss_d = soft_cross_entropy(out.domain_probs, soft_targets)
 
+        # Optional attention supervision cross entropy loss
+        loss_attn_d = torch.zeros((), device=self.device)
+        if (
+            self.model.fusion_type == "multihead_attention"
+            and getattr(self.model, "attention_supervision", "none") == "cross_entropy"
+        ):
+            loss_attn_d = soft_cross_entropy(out.fusion_weights, soft_targets)
+
         # Contrastive (HACE-VD specific).
         loss_c = torch.zeros((), device=self.device)
         if self.loss_cfg.contrastive_weight > 0 and out.projections is not None:
@@ -115,6 +123,7 @@ class Trainer:
         total = (
             self.loss_cfg.vuln_weight        * loss_v
             + self.loss_cfg.domain_weight    * loss_d
+            + self.loss_cfg.domain_weight    * loss_attn_d
             + self.loss_cfg.contrastive_weight * loss_c
         )
 
@@ -122,6 +131,7 @@ class Trainer:
             "loss_total": float(total.item()),
             "loss_vuln":  float(loss_v.item()),
             "loss_domain": float(loss_d.item()),
+            "loss_attn_domain": float(loss_attn_d.item()),
             "loss_contrast": float(loss_c.item()),
         }
         return total, log
@@ -163,7 +173,19 @@ class Trainer:
             out = self.model(embeddings)
             loss_v = weighted_vulnerability_loss(out.vuln_logits, labels)
             loss_d = soft_cross_entropy(out.domain_probs, soft_targets)
-            loss   = self.loss_cfg.vuln_weight * loss_v + self.loss_cfg.domain_weight * loss_d
+            
+            loss_attn_d = torch.zeros((), device=self.device)
+            if (
+                self.model.fusion_type == "multihead_attention"
+                and getattr(self.model, "attention_supervision", "none") == "cross_entropy"
+            ):
+                loss_attn_d = soft_cross_entropy(out.fusion_weights, soft_targets)
+
+            loss = (
+                self.loss_cfg.vuln_weight * loss_v
+                + self.loss_cfg.domain_weight * loss_d
+                + self.loss_cfg.domain_weight * loss_attn_d
+            )
 
             preds = out.vuln_logits.argmax(dim=-1)
             all_preds.append(preds.cpu().numpy())

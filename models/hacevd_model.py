@@ -65,13 +65,21 @@ class MultiHeadAttentionFusion(nn.Module):
         # Per-head temperature softens / sharpens the attention distribution.
         self.scale = self.head_dim ** -0.5
 
-    def forward(self, embedding: torch.Tensor, expert_logits: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        embedding: torch.Tensor,
+        expert_logits: torch.Tensor,
+        domain_probs: Optional[torch.Tensor] = None,
+        supervision_mode: str = "none",
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute attention-weighted fusion.
 
         Parameters
         ----------
         embedding     : (B, D)         input semantic embedding.
         expert_logits : (B, K, C)      per-expert classification logits.
+        domain_probs  : (B, K)         domain probabilities from classifier.
+        supervision_mode : str         supervision mechanism: "none", "gate", or "residual".
 
         Returns
         -------
@@ -85,11 +93,21 @@ class MultiHeadAttentionFusion(nn.Module):
         k = self.expert_keys.view(K, H, Dh).permute(1, 0, 2)    # (H, K, Dh)
 
         # Dot-product attention: (B, H, K)
-        attn = torch.einsum("bhd,hkd->bhk", q, k) * self.scale
-        attn = F.softmax(attn, dim=-1)                          # softmax over experts
+        attn_logits = torch.einsum("bhd,hkd->bhk", q, k) * self.scale
+
+        if supervision_mode == "residual" and domain_probs is not None:
+            # Add log(domain_probs) to attention logits before softmax
+            log_domain = torch.log(domain_probs + 1e-12).unsqueeze(1) # (B, 1, K)
+            attn = F.softmax(attn_logits + log_domain, dim=-1)
+        else:
+            attn = F.softmax(attn_logits, dim=-1)
 
         # Average across heads to recover per-expert weights.
         weights = attn.mean(dim=1)                              # (B, K)
+
+        if supervision_mode == "gate" and domain_probs is not None:
+            gated_weights = domain_probs * weights
+            weights = gated_weights / (gated_weights.sum(dim=-1, keepdim=True) + 1e-12)
 
         # Weighted sum of expert logits.
         fused = torch.einsum("bk,bkc->bc", weights, expert_logits)
@@ -121,10 +139,12 @@ class HACEVDModel(nn.Module):
         projection_hidden: int = 256,
         projection_dim: int = 128,
         num_classes: int = 2,
+        attention_supervision: str = "none",
     ) -> None:
         super().__init__()
         self.num_domains = num_domains
         self.fusion_type = fusion_type
+        self.attention_supervision = attention_supervision
 
         # ---- k parallel experts ------------------------------------------------
         self.experts = nn.ModuleList(
@@ -203,7 +223,12 @@ class HACEVDModel(nn.Module):
             fusion_weights = domain_probs                       # (B, K)
             fused = torch.einsum("bk,bkc->bc", fusion_weights, expert_logits)
         else:
-            fused, fusion_weights = self.fusion(embeddings, expert_logits)
+            fused, fusion_weights = self.fusion(
+                embeddings,
+                expert_logits,
+                domain_probs=domain_probs,
+                supervision_mode=self.attention_supervision,
+            )
 
         # Projections (optional).
         if self.projection is not None:
