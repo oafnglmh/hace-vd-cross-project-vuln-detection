@@ -1,0 +1,29 @@
+# Python cache and temporary files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Datasets and generated data
+cevd_data/
+data/embeddings/
+data/pseudo_domains/
+data/processed/
+
+# Training outputs, checkpoints, and logs
+runs/
+*.log
+
+# Environments and dependencies
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDEs and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

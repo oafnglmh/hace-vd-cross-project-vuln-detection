@@ -1,0 +1,64 @@
+# =============================================================================
+#  HACE-VD default configuration.
+# -----------------------------------------------------------------------------
+#  This single file controls both the CEVD baseline and the HACE-VD method.
+#  Switch a flag and you reproduce a different configuration.
+# =============================================================================
+
+seed: 8
+
+backbone:
+  name:        "microsoft/codebert-base"   # or "claudios/vulberta"
+  max_length:  512
+  freeze:      true                         # CEVD freezes the backbone; we follow.
+  embedding_dim: 768
+
+clustering:
+  method:     "hdbscan"                     # ["kmeans", "hdbscan", "gmm"]
+  metric:     "cosine"                      # cosine or euclidean
+  k:          null                          # used only if method == "kmeans"
+  min_cluster_size: 200                     # HDBSCAN parameter
+  min_samples: 50                           # HDBSCAN parameter
+  l2_normalize: true                        # normalize embeddings before clustering
+  random_state: 42
+
+soft_labels:
+  type:        "softmax_neg_distance"       # CEVD's formulation
+  temperature: 1.0                          # >1 makes labels smoother
+
+experts:
+  hidden_dim:  768
+  num_layers:  2
+  dropout:     0.1
+  activation:  "tanh"                       # CEVD uses tanh in the RoBERTa-style head
+
+domain_classifier:
+  hidden_dim:  768
+  dropout:     0.1
+
+fusion:
+  type:        "multihead_attention"        # ["linear_softmax", "multihead_attention"]
+  num_heads:   4                            # only used for multihead_attention
+  attention_dim: 128
+
+loss:
+  vuln_weight:         1.0                  # weight on cross-entropy for vulnerability
+  domain_weight:       0.1                  # CEVD's lambda
+  contrastive_weight:  0.1                  # 0.0 = disabled (CEVD), >0 = HACE-VD
+  contrastive_temperature: 0.07
+  contrastive_type:    "supervised"         # supervised contrastive (Khosla et al.)
+
+training:
+  batch_size:       32
+  learning_rate:    5.0e-4
+  weight_decay:     1.0e-4
+  num_epochs:       10
+  early_stopping_patience: 3
+  oversample_minority: true                 # random oversampling (CEVD's setting)
+  grad_clip:        1.0
+
+paths:
+  data_root:        "data/processed"
+  embeddings_root:  "data/embeddings"
+  pseudo_domains:   "data/pseudo_domains/hacevd_codebert.npz"
+  output_dir:       "runs/hacevd_codebert"
