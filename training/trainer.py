@@ -127,6 +127,10 @@ class Trainer:
             + self.loss_cfg.contrastive_weight * loss_c
         )
 
+        # Quality-gate regularization (0 nếu fusion không có gate).
+        # Giữ g gần 1 trừ khi dữ liệu thực sự chứng minh expert kém.
+        total = total + self.model.fusion_gate_reg()
+
         log = {
             "loss_total": float(total.item()),
             "loss_vuln":  float(loss_v.item()),
@@ -220,6 +224,16 @@ class Trainer:
                 f"val_loss={val_log['loss']:.4f}  "
                 f"val_f1={val_log['f1']*100:.2f}%"
             )
+
+            fus = getattr(self.model, "fusion", None)
+            if fus is not None:
+                msg = []
+                if hasattr(fus, "tau"):   msg.append(f"tau={fus.tau.item():.3f}")
+                if hasattr(fus, "alpha"): msg.append(f"alpha={fus.alpha.item():.3f}")
+                if hasattr(fus, "gate"):
+                    msg.append("gate=[" + ", ".join(f"{g:.3f}"
+                        for g in fus.gate.tolist()) + "]")
+                if msg: print("        [fusion] " + "  ".join(msg))
 
             if val_log["f1"] > best_f1:
                 best_f1 = val_log["f1"]

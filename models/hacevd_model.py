@@ -1,14 +1,13 @@
-"""End-to-end HACE-VD model.
+"""End-to-end HACE-VD model — ban da tich hop 4 co che fusion.
 
-This module assembles the building blocks (experts, domain classifier,
-optional projection head, and either linear-softmax or multi-head attention
-fusion) into a single ``nn.Module``. The backbone is expected to have been
-applied beforehand and only embeddings are passed in.
+Thay cho models/hacevd_model.py cu. Diem khac so ban cu:
+  * import build_fusion tu fusion_hace
+  * ho tro fusion_type: linear_softmax | tempered_gate | residual_gate |
+    gated_residual | multihead_attention (giu tuong thich nguoc)
+  * forward() truyen domain_probs vao module fusion moi
+  * expose fusion_gate_reg() de trainer cong penalty cua quality-gate
 
-Toggling configuration flags reproduces either the **CEVD baseline** or the
-**HACE-VD** variant.
-
-Author : implementation accompanying the HACE-VD manuscript.
+Cac file .domain_classifier / .expert / .projection_head giu NGUYEN, khong sua.
 """
 
 from __future__ import annotations
@@ -23,106 +22,47 @@ import torch.nn.functional as F
 from .domain_classifier import DomainClassifier
 from .expert import DomainExpert
 from .projection_head import ProjectionHead
+from .fusion_hace import build_fusion
 
 
 @dataclass
 class HACEVDOutput:
-    """Container for the model outputs needed by the training loop."""
-
-    vuln_logits:     torch.Tensor              # (B, 2) fused vulnerability logits
-    expert_logits:   torch.Tensor              # (B, k, 2) per-expert logits
-    domain_probs:    torch.Tensor              # (B, k)   classifier softmax
-    fusion_weights:  torch.Tensor              # (B, k)   weights actually used in fusion
-    projections:     Optional[torch.Tensor]    # (B, k, P) projection-head outputs
-    expert_features: Optional[torch.Tensor]    # (B, k, H) expert hidden features
+    vuln_logits:     torch.Tensor
+    expert_logits:   torch.Tensor
+    domain_probs:    torch.Tensor
+    fusion_weights:  torch.Tensor
+    projections:     Optional[torch.Tensor]
+    expert_features: Optional[torch.Tensor]
 
 
 class MultiHeadAttentionFusion(nn.Module):
-    """Attention-based fusion of expert logits.
+    """Giu lai khoi attention THUAN cu de tuong thich nguoc (fusion_type=
+    'multihead_attention'). KHONG dung domain_probs -> chinh la ban gay ra
+    van de o cac luot truoc. Chi giu cho ablation so sanh."""
 
-    The query is computed from the input embedding (so it depends on the
-    sample's semantic content), the keys are learnable per-expert vectors,
-    and the values are the experts' logits. We use ``num_heads`` parallel
-    attention heads and average their outputs.
-    """
-
-    def __init__(
-        self,
-        embedding_dim: int,
-        num_experts: int,
-        num_heads: int = 4,
-        attention_dim: int = 128,
-    ) -> None:
+    def __init__(self, embedding_dim, num_experts, num_heads=4, attention_dim=128):
         super().__init__()
-        assert attention_dim % num_heads == 0, "attention_dim must be divisible by num_heads"
+        assert attention_dim % num_heads == 0
         self.num_heads = num_heads
         self.num_experts = num_experts
         self.head_dim = attention_dim // num_heads
-
         self.query_proj = nn.Linear(embedding_dim, attention_dim)
-        # Learnable key vectors, one per expert.
         self.expert_keys = nn.Parameter(torch.randn(num_experts, attention_dim) * 0.02)
-        # Per-head temperature softens / sharpens the attention distribution.
         self.scale = self.head_dim ** -0.5
 
-    def forward(
-        self,
-        embedding: torch.Tensor,
-        expert_logits: torch.Tensor,
-        domain_probs: Optional[torch.Tensor] = None,
-        supervision_mode: str = "none",
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute attention-weighted fusion.
-
-        Parameters
-        ----------
-        embedding     : (B, D)         input semantic embedding.
-        expert_logits : (B, K, C)      per-expert classification logits.
-        domain_probs  : (B, K)         domain probabilities from classifier.
-        supervision_mode : str         supervision mechanism: "none", "gate", or "residual".
-
-        Returns
-        -------
-        fused_logits  : (B, C)
-        weights       : (B, K)        head-averaged attention weights.
-        """
+    def forward(self, embedding, expert_logits):
         B, K, C = expert_logits.shape
         H, Dh = self.num_heads, self.head_dim
-
-        q = self.query_proj(embedding).view(B, H, Dh)           # (B, H, Dh)
-        k = self.expert_keys.view(K, H, Dh).permute(1, 0, 2)    # (H, K, Dh)
-
-        # Dot-product attention: (B, H, K)
-        attn_logits = torch.einsum("bhd,hkd->bhk", q, k) * self.scale
-
-        if supervision_mode == "residual" and domain_probs is not None:
-            # Add log(domain_probs) to attention logits before softmax
-            log_domain = torch.log(domain_probs + 1e-12).unsqueeze(1) # (B, 1, K)
-            attn = F.softmax(attn_logits + log_domain, dim=-1)
-        else:
-            attn = F.softmax(attn_logits, dim=-1)
-
-        # Average across heads to recover per-expert weights.
-        weights = attn.mean(dim=1)                              # (B, K)
-
-        if supervision_mode == "gate" and domain_probs is not None:
-            gated_weights = domain_probs * weights
-            weights = gated_weights / (gated_weights.sum(dim=-1, keepdim=True) + 1e-12)
-
-        # Weighted sum of expert logits.
+        q = self.query_proj(embedding).view(B, H, Dh)
+        k = self.expert_keys.view(K, H, Dh).permute(1, 0, 2)
+        attn = torch.einsum("bhd,hkd->bhk", q, k) * self.scale
+        attn = F.softmax(attn, dim=-1)
+        weights = attn.mean(dim=1)
         fused = torch.einsum("bk,bkc->bc", weights, expert_logits)
         return fused, weights
 
 
 class HACEVDModel(nn.Module):
-    """End-to-end HACE-VD model assembly.
-
-    The backbone is treated as an external feature extractor: ``forward()``
-    expects already-computed embeddings of shape ``(B, embedding_dim)``.
-    This decoupling keeps the model small and allows offline embedding
-    caching for cheap experimentation.
-    """
-
     def __init__(
         self,
         embedding_dim: int,
@@ -132,13 +72,17 @@ class HACEVDModel(nn.Module):
         expert_activation: str = "tanh",
         domain_hidden: int = 768,
         domain_dropout: float = 0.1,
-        fusion_type: str = "multihead_attention",
+        fusion_type: str = "gated_residual",
         attention_heads: int = 4,
         attention_dim: int = 128,
         use_projection: bool = True,
         projection_hidden: int = 256,
         projection_dim: int = 128,
         num_classes: int = 2,
+        # tham so fusion moi (doc tu cfg["fusion"]):
+        tau_init: float = 1.0,
+        alpha_init: float = 0.0,
+        gate_l2: float = 1e-3,
         attention_supervision: str = "none",
     ) -> None:
         super().__init__()
@@ -146,103 +90,71 @@ class HACEVDModel(nn.Module):
         self.fusion_type = fusion_type
         self.attention_supervision = attention_supervision
 
-        # ---- k parallel experts ------------------------------------------------
+
         self.experts = nn.ModuleList(
-            DomainExpert(
-                embedding_dim=embedding_dim,
-                hidden_dim=expert_hidden,
-                dropout=expert_dropout,
-                activation=expert_activation,
-                num_classes=num_classes,
-            )
+            DomainExpert(embedding_dim=embedding_dim, hidden_dim=expert_hidden,
+                         dropout=expert_dropout, activation=expert_activation,
+                         num_classes=num_classes)
             for _ in range(num_domains)
         )
-
-        # ---- domain classifier -------------------------------------------------
         self.domain_classifier = DomainClassifier(
-            embedding_dim=embedding_dim,
-            hidden_dim=domain_hidden,
-            num_domains=num_domains,
-            dropout=domain_dropout,
-        )
+            embedding_dim=embedding_dim, hidden_dim=domain_hidden,
+            num_domains=num_domains, dropout=domain_dropout)
 
-        # ---- optional contrastive projection ----------------------------------
         self.use_projection = use_projection
-        if use_projection:
-            self.projection = ProjectionHead(
-                in_dim=expert_hidden,
-                hidden_dim=projection_hidden,
-                out_dim=projection_dim,
-            )
-        else:
-            self.projection = None
+        self.projection = (ProjectionHead(in_dim=expert_hidden, hidden_dim=projection_hidden,
+                                          out_dim=projection_dim) if use_projection else None)
 
-        # ---- fusion module -----------------------------------------------------
-        if fusion_type == "linear_softmax":
-            self.fusion = None                              # CEVD's simple weighted sum
-        elif fusion_type == "multihead_attention":
-            self.fusion = MultiHeadAttentionFusion(
-                embedding_dim=embedding_dim,
-                num_experts=num_domains,
-                num_heads=attention_heads,
-                attention_dim=attention_dim,
-            )
+        # ---- fusion ----
+        if fusion_type == "multihead_attention":
+            self.fusion = MultiHeadAttentionFusion(embedding_dim, num_domains,
+                                                   attention_heads, attention_dim)
+            self._fusion_takes_domain = False
+        elif fusion_type == "linear_softmax":
+            self.fusion = None
+            self._fusion_takes_domain = False
         else:
-            raise ValueError(f"Unknown fusion type: {fusion_type}")
+            self.fusion = build_fusion(
+                fusion_type, embedding_dim, num_domains,
+                num_heads=attention_heads, attention_dim=attention_dim,
+                tau_init=tau_init, alpha_init=alpha_init, gate_l2=gate_l2)
+            self._fusion_takes_domain = True
+
+    def fusion_gate_reg(self) -> torch.Tensor:
+        """Penalty cua quality-gate (0 neu fusion khong co gate). Trainer cong vao loss."""
+        if self.fusion is not None and hasattr(self.fusion, "gate_reg"):
+            return self.fusion.gate_reg()
+        # tra ve 0 dung device
+        p = next(self.parameters())
+        return torch.zeros((), device=p.device, dtype=p.dtype)
 
     def forward(self, embeddings: torch.Tensor) -> HACEVDOutput:
-        """Run the ensemble on a batch of frozen embeddings.
-
-        Parameters
-        ----------
-        embeddings : (B, D) float tensor produced by the frozen backbone.
-
-        Returns
-        -------
-        HACEVDOutput with the fields populated.
-        """
-        B, _ = embeddings.shape
-        K = self.num_domains
-
-        # Per-expert logits and (optionally) features for contrastive loss.
-        expert_features = []
-        expert_logits   = []
+        expert_features, expert_logits = [], []
         for expert in self.experts:
-            feat = expert.feature(embeddings)               # (B, H)
-            logit = expert.out_proj(expert.dropout(feat))   # (B, C)
+            feat = expert.feature(embeddings)
+            logit = expert.out_proj(expert.dropout(feat))
             expert_features.append(feat)
             expert_logits.append(logit)
-        expert_features = torch.stack(expert_features, dim=1)   # (B, K, H)
-        expert_logits   = torch.stack(expert_logits, dim=1)     # (B, K, C)
+        expert_features = torch.stack(expert_features, dim=1)  # (B,K,H)
+        expert_logits = torch.stack(expert_logits, dim=1)      # (B,K,C)
 
-        # Domain classifier outputs (soft membership distribution).
-        domain_probs = self.domain_classifier(embeddings)       # (B, K)
+        domain_probs = self.domain_classifier(embeddings)      # (B,K)
 
-        # Fusion.
         if self.fusion_type == "linear_softmax":
-            fusion_weights = domain_probs                       # (B, K)
+            fusion_weights = domain_probs
             fused = torch.einsum("bk,bkc->bc", fusion_weights, expert_logits)
-        else:
-            fused, fusion_weights = self.fusion(
-                embeddings,
-                expert_logits,
-                domain_probs=domain_probs,
-                supervision_mode=self.attention_supervision,
-            )
+        elif self._fusion_takes_domain:
+            fused, fusion_weights = self.fusion(embeddings, expert_logits, domain_probs)
+        else:  # multihead_attention thuan
+            fused, fusion_weights = self.fusion(embeddings, expert_logits)
 
-        # Projections (optional).
         if self.projection is not None:
             B_, K_, H = expert_features.shape
-            projections = self.projection(expert_features.reshape(B_ * K_, H))
-            projections = projections.view(B_, K_, -1)
+            projections = self.projection(expert_features.reshape(B_ * K_, H)).view(B_, K_, -1)
         else:
             projections = None
 
         return HACEVDOutput(
-            vuln_logits=fused,
-            expert_logits=expert_logits,
-            domain_probs=domain_probs,
-            fusion_weights=fusion_weights,
-            projections=projections,
-            expert_features=expert_features,
-        )
+            vuln_logits=fused, expert_logits=expert_logits, domain_probs=domain_probs,
+            fusion_weights=fusion_weights, projections=projections,
+            expert_features=expert_features)

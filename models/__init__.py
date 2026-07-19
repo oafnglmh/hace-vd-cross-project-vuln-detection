@@ -9,6 +9,8 @@ from .expert import DomainExpert
 from .domain_classifier import DomainClassifier
 from .projection_head import ProjectionHead
 from .hacevd_model import HACEVDModel
+from .fusion_hace import build_fusion
+
 
 
 def __getattr__(name: str):

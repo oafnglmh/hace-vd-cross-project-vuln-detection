@@ -1,0 +1,69 @@
+# HACE-VD (gated_residual) — CodeBERT.
+# Ket hop: HDBSCAN pseudo-domain + SupCon + learned-temperature residual gate
+# + quality-gate loai expert rac. Day la cau hinh "full" de vuot CEVD.
+
+seed: 8
+
+backbone:
+  name:        "microsoft/codebert-base"
+  max_length:  512
+  freeze:      true
+  embedding_dim: 768
+
+clustering:
+  method:     "hdbscan"      # doi thanh "kmeans" + k:5 cho cac o ablation
+  metric:     "cosine"
+  k:          null
+  min_cluster_size: 200
+  min_samples: 50
+  l2_normalize: true
+  random_state: 42
+  umap_components: 10
+  umap_neighbors: 15
+  noise_threshold: 0.35
+
+soft_labels:
+  type:        "softmax_neg_distance"
+  temperature: 0.1           # <-- QUAN TRONG: lay tu diagnose_routing PHAN B
+                             #     (khong con 1.0). Nham k_eff test ~ 2.5-3.5.
+
+experts:
+  hidden_dim:  768
+  num_layers:  2
+  dropout:     0.1
+  activation:  "tanh"
+
+domain_classifier:
+  hidden_dim:  768
+  dropout:     0.1
+
+fusion:
+  type:        "gated_residual"   # linear_softmax | tempered_gate |
+                                  # residual_gate | gated_residual
+  num_heads:   4
+  attention_dim: 128
+  tau_init:    1.0           # nhiet do fusion khoi tao (hoc duoc)
+  alpha_init:  0.0           # gate attention khoi tao 0 -> bat dau = CEVD
+  gate_l2:     0.001         # phat |1-g|, giu quality-gate gan 1 luc dau
+
+loss:
+  vuln_weight:         1.0
+  domain_weight:       0.1
+  contrastive_weight:  0.1
+  contrastive_temperature: 0.07
+  contrastive_type:    "supervised"
+
+training:
+  batch_size:       32
+  learning_rate:    5.0e-4
+  weight_decay:     1.0e-4
+  num_epochs:       100
+  early_stopping_patience: 10
+  oversample_minority: true
+  grad_clip:        1.0
+
+paths:
+  data_root:        "data/processed"
+  embeddings_root:  "data/embeddings/codebert"
+  pseudo_domains:   "data/pseudo_domains/hacevd_codebert.npz"
+  output_dir:       "runs/hacevd_gated_codebert"

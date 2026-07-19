@@ -102,7 +102,7 @@ def run_smoke_test() -> None:
         expert_activation="tanh",
         domain_hidden=32,
         domain_dropout=0.1,
-        fusion_type="multihead_attention",
+        fusion_type="gated_residual",
         attention_heads=2,
         attention_dim=16,
         use_projection=True,
