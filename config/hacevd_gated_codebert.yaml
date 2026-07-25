@@ -24,8 +24,7 @@ clustering:
 
 soft_labels:
   type:        "softmax_neg_distance"
-  temperature: 0.1           # <-- QUAN TRONG: lay tu diagnose_routing PHAN B
-                             #     (khong con 1.0). Nham k_eff test ~ 2.5-3.5.
+  temperature: 1.0
 
 experts:
   hidden_dim:  768
@@ -61,6 +60,7 @@ training:
   early_stopping_patience: 10
   oversample_minority: true
   grad_clip:        1.0
+  early_stop_metric: "f1"
 
 paths:
   data_root:        "data/processed"

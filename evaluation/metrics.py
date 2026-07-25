@@ -46,3 +46,20 @@ def per_project_metrics(
             continue
         result[str(p)] = binary_metrics(labels[mask], preds[mask])
     return result
+
+
+def average_precision(labels: np.ndarray, probs: np.ndarray) -> float:
+    """Average Precision (dien tich duoi duong PR) — khop sklearn.
+    labels: 0/1 array. probs: xac suat lop duong (1)."""
+    y = np.asarray(labels).astype(int)
+    p = np.asarray(probs, dtype=float)
+    order = np.argsort(-p)
+    y = y[order]
+    tp = np.cumsum(y)
+    fp = np.cumsum(1 - y)
+    prec = tp / np.maximum(tp + fp, 1)
+    npos = max(int(y.sum()), 1)
+    rec = tp / npos
+    rec_prev = np.concatenate([[0.0], rec[:-1]])
+    return float(np.sum((rec - rec_prev) * prec))
+

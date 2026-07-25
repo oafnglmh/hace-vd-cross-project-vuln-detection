@@ -73,9 +73,8 @@ class GatedResidualFusion(nn.Module):
         self.attn = _AttentionLogits(embedding_dim, num_experts, num_heads, attention_dim)
         self.log_tau = nn.Parameter(torch.tensor([float(torch.log(torch.tensor(tau_init)))]))
         self.alpha = nn.Parameter(torch.tensor([float(alpha_init)]))
-        # logit_gate khoi tao bang 0.02 -> log_g = -0.02 -> g = 0.98.
-        # Khoi tao bang 0.02 de tranh loi chet gradient (zero gradient) cua ReLU tai 0.
-        self.logit_gate = nn.Parameter(torch.full((num_experts,), 0.02))
+        # Initializing logit_gate = 4.0 -> sigmoid(4.0) = 0.982
+        self.logit_gate = nn.Parameter(torch.full((num_experts,), 4.0))
 
     @property
     def tau(self) -> torch.Tensor:
@@ -83,17 +82,16 @@ class GatedResidualFusion(nn.Module):
 
     @property
     def gate(self) -> torch.Tensor:
-        # g = exp(-leaky_relu(logit_gate, 0.01))
-        return torch.exp(-F.leaky_relu(self.logit_gate, negative_slope=0.01))
+        return torch.sigmoid(self.logit_gate)
 
     def gate_reg(self) -> torch.Tensor:
-        """Phat de giu g gan 1 (logit_gate gan 0). Cong vao tong loss trong trainer."""
-        return self.gate_l2 * (self.logit_gate ** 2).sum()
+        """Penalty to keep gate g close to 1.0 (logit_gate close to 4.0). Added to loss in trainer."""
+        return self.gate_l2 * ((1.0 - self.gate) ** 2).sum()
 
     def forward(self, embedding, expert_logits, domain_probs):
         prior = torch.log(domain_probs.clamp_min(self.eps))
         attn = self.attn(embedding)
-        log_g = -F.leaky_relu(self.logit_gate, negative_slope=0.01).unsqueeze(0)  # (1,K)
+        log_g = torch.log(self.gate.clamp_min(self.eps)).unsqueeze(0)  # (1, K) <= 0
         weights = F.softmax(prior / self.tau + self.alpha * attn + log_g, dim=-1)
         return _softmax_fuse(weights, expert_logits), weights
 

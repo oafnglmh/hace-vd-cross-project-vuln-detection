@@ -114,7 +114,14 @@ def main() -> None:
     )
 
     loss_cfg = LossConfig(vuln_weight=cfg["loss"]["vuln_weight"], domain_weight=cfg["loss"]["domain_weight"], contrastive_weight=cfg["loss"]["contrastive_weight"], contrastive_temperature=cfg["loss"]["contrastive_temperature"])
-    train_cfg = TrainConfig(num_epochs=cfg["training"]["num_epochs"], learning_rate=cfg["training"]["learning_rate"], weight_decay=cfg["training"]["weight_decay"], grad_clip=cfg["training"]["grad_clip"], early_stopping_patience=cfg["training"]["early_stopping_patience"])
+    train_cfg = TrainConfig(
+        num_epochs=cfg["training"]["num_epochs"],
+        learning_rate=cfg["training"]["learning_rate"],
+        weight_decay=cfg["training"]["weight_decay"],
+        grad_clip=cfg["training"]["grad_clip"],
+        early_stopping_patience=cfg["training"]["early_stopping_patience"],
+        early_stop_metric=cfg["training"].get("early_stop_metric", "ap"),
+    )
 
     seed_output_dir = Path(cfg["paths"]["output_dir"]) / f"seed_{cfg.get('seed', 8)}"
     trainer = Trainer(model=model, train_loader=train_loader, val_loader=val_loader, train_cfg=train_cfg, loss_cfg=loss_cfg, output_dir=seed_output_dir)

@@ -25,7 +25,7 @@ from losses import (
     supervised_contrastive_loss,
     weighted_vulnerability_loss,
 )
-from evaluation.metrics import binary_metrics
+from evaluation.metrics import binary_metrics, average_precision
 
 
 @dataclass
@@ -43,6 +43,7 @@ class TrainConfig:
     weight_decay:      float = 1e-4
     grad_clip:         float = 1.0
     early_stopping_patience: int = 3
+    early_stop_metric: str = "ap"        # "ap" (khuyen nghi) hoac "f1"
 
 
 @dataclass
@@ -165,7 +166,7 @@ class Trainer:
     @torch.no_grad()
     def evaluate(self, loader: DataLoader) -> dict[str, float]:
         self.model.eval()
-        all_preds, all_labels = [], []
+        all_preds, all_probs, all_labels = [], [], []
         loss_sum = 0.0
         n = 0
         pbar = tqdm(loader, desc="  Evaluating batches", leave=False)
@@ -191,24 +192,29 @@ class Trainer:
                 + self.loss_cfg.domain_weight * loss_attn_d
             )
 
+            prob1 = torch.softmax(out.vuln_logits, dim=-1)[:, 1]
             preds = out.vuln_logits.argmax(dim=-1)
             all_preds.append(preds.cpu().numpy())
+            all_probs.append(prob1.cpu().numpy())
             all_labels.append(labels.cpu().numpy())
             loss_sum += float(loss.item()) * embeddings.size(0)
             n        += embeddings.size(0)
             pbar.set_postfix(loss=loss.item())
 
         preds  = np.concatenate(all_preds)
+        probs  = np.concatenate(all_probs)
         labels = np.concatenate(all_labels)
         metrics = binary_metrics(labels, preds)
         metrics["loss"] = loss_sum / max(n, 1)
+        metrics["ap"]   = average_precision(labels, probs)
         return metrics
 
     # ---------------------------------------------------------------------
     #  Full fit with early stopping on val-F1
     # ---------------------------------------------------------------------
     def fit(self) -> TrainingHistory:
-        best_f1 = -1.0
+        best_score = -1.0
+        select = getattr(self.train_cfg, "early_stop_metric", "ap")
         no_improve_epochs = 0
         best_path = self.output_dir / "best.pt"
 
@@ -222,7 +228,8 @@ class Trainer:
                 f"[epoch {epoch:02d}] "
                 f"train_loss={train_log['loss_total']:.4f}  "
                 f"val_loss={val_log['loss']:.4f}  "
-                f"val_f1={val_log['f1']*100:.2f}%"
+                f"val_f1={val_log['f1']*100:.2f}%  "
+                f"val_ap={val_log.get('ap', 0.0)*100:.2f}%"
             )
 
             fus = getattr(self.model, "fusion", None)
@@ -235,11 +242,13 @@ class Trainer:
                         for g in fus.gate.tolist()) + "]")
                 if msg: print("        [fusion] " + "  ".join(msg))
 
-            if val_log["f1"] > best_f1:
-                best_f1 = val_log["f1"]
+            score = val_log.get(select, val_log["f1"])
+            if score > best_score:
+                best_score = score
                 no_improve_epochs = 0
                 torch.save(
-                    {"model_state": self.model.state_dict(), "epoch": epoch, "val_f1": best_f1},
+                    {"model_state": self.model.state_dict(), "epoch": epoch,
+                     "val_f1": val_log["f1"], "val_ap": val_log.get("ap", 0.0)},
                     best_path,
                 )
             else:

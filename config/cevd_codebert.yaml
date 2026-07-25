@@ -52,6 +52,7 @@ training:
   early_stopping_patience: 10
   oversample_minority: true
   grad_clip:        1.0
+  early_stop_metric: "ap"
 
 paths:
   data_root:        "data/processed"
