@@ -186,6 +186,8 @@ def construct_pseudo_domains(
     umap_components: Optional[int] = None,
     umap_neighbors: int = 15,
     noise_threshold: float = 0.35,
+    min_k: int = 4,
+    max_k: int = 8,
 ) -> PseudoDomainResult:
     """Cluster the embeddings and return assignments + centers.
 
@@ -378,8 +380,8 @@ def construct_pseudo_domains(
         final_ratios = final_counts / total_samples
         print(f"      [HDBSCAN Guardrail] Final cluster count k={k_eff}, sizes={final_counts.tolist()}, ratios={np.round(final_ratios, 4).tolist()}")
 
-        if k_eff < 4 or k_eff > 8:
-            raise ValueError(f"Final cluster count k={k_eff} is outside the allowed range [4, 8].")
+        if k_eff < min_k or k_eff > max_k:
+            raise ValueError(f"Final cluster count k={k_eff} is outside the allowed range [{min_k}, {max_k}].")
 
         for i, ratio in enumerate(final_ratios):
             if ratio > 0.45:

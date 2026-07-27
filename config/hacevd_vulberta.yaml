@@ -15,13 +15,13 @@ clustering:
   method:     "hdbscan"
   metric:     "cosine"
   k:          null
-  min_cluster_size: 200
-  min_samples: 50
+  min_cluster_size: 1500
+  min_samples: 100
   l2_normalize: true
   random_state: 42
   umap_components: 10
   umap_neighbors: 15
-  noise_threshold: 0.35
+  noise_threshold: 0.55
 
 soft_labels:
   type:        "softmax_neg_distance"

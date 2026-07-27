@@ -66,6 +66,7 @@ def run_smoke_test() -> None:
             min_cluster_size=20,
             min_samples=5,
             l2_normalize_inputs=True,
+            min_k=2,
         )
         print(f"      HDBSCAN -> k={h.k}  sizes={np.bincount(h.assignments).tolist()}")
     except ImportError:
